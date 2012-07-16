@@ -98,6 +98,7 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/timeout.h"
 #include "utils/timestamp.h"
 #include "utils/tqual.h"
 
@@ -437,7 +438,7 @@ AutoVacLauncherMain(int argc, char *argv[])
 	pqsignal(SIGTERM, avl_sigterm_handler);
 
 	pqsignal(SIGQUIT, quickdie);
-	pqsignal(SIGALRM, handle_sig_alarm);
+	InitializeTimeouts();		/* establishes SIGALRM handler */
 
 	pqsignal(SIGPIPE, SIG_IGN);
 	pqsignal(SIGUSR1, procsignal_sigusr1_handler);
@@ -487,9 +488,9 @@ AutoVacLauncherMain(int argc, char *argv[])
 		/* Prevents interrupts while cleaning up */
 		HOLD_INTERRUPTS();
 
-		/* Forget any pending QueryCancel request */
+		/* Forget any pending QueryCancel or timeout request */
 		QueryCancelPending = false;
-		disable_sig_alarm(true);
+		disable_all_timeouts(false);
 		QueryCancelPending = false;		/* again in case timeout occurred */
 
 		/* Report the error to the server log */
@@ -1490,7 +1491,7 @@ AutoVacWorkerMain(int argc, char *argv[])
 	pqsignal(SIGINT, StatementCancelHandler);
 	pqsignal(SIGTERM, die);
 	pqsignal(SIGQUIT, quickdie);
-	pqsignal(SIGALRM, handle_sig_alarm);
+	InitializeTimeouts();		/* establishes SIGALRM handler */
 
 	pqsignal(SIGPIPE, SIG_IGN);
 	pqsignal(SIGUSR1, procsignal_sigusr1_handler);
