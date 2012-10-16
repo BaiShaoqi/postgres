@@ -95,7 +95,7 @@
 #include "access/xlog.h"
 #include "bootstrap/bootstrap.h"
 #include "catalog/pg_control.h"
-#include "lib/dllist.h"
+#include "lib/ilist.h"
 #include "libpq/auth.h"
 #include "libpq/ip.h"
 #include "libpq/libpq.h"
@@ -145,10 +145,10 @@ typedef struct bkend
 	int			child_slot;		/* PMChildSlot for this backend, if any */
 	bool		is_autovacuum;	/* is it an autovacuum process? */
 	bool		dead_end;		/* is it going to send an error and quit? */
-	Dlelem		elem;			/* list link in BackendList */
+	dlist_node	elem;			/* list link in BackendList */
 } Backend;
 
-static Dllist *BackendList;
+static dlist_head BackendList = DLIST_STATIC_INIT(BackendList);
 
 #ifdef EXEC_BACKEND
 static Backend *ShmemBackendArray;
@@ -974,11 +974,6 @@ PostmasterMain(int argc, char *argv[])
 	set_stack_base();
 
 	/*
-	 * Initialize the list of active backends.
-	 */
-	BackendList = DLNewList();
-
-	/*
 	 * Initialize pipe (or process handle on Windows) that allows children to
 	 * wake up from sleep on postmaster death.
 	 */
@@ -1797,7 +1792,7 @@ processCancelRequest(Port *port, void *pkt)
 	Backend    *bp;
 
 #ifndef EXEC_BACKEND
-	Dlelem	   *curr;
+	dlist_iter  iter;
 #else
 	int			i;
 #endif
@@ -1811,9 +1806,9 @@ processCancelRequest(Port *port, void *pkt)
 	 * duplicate array in shared memory.
 	 */
 #ifndef EXEC_BACKEND
-	for (curr = DLGetHead(BackendList); curr; curr = DLGetSucc(curr))
+	dlist_foreach(iter, &BackendList)
 	{
-		bp = (Backend *) DLE_VAL(curr);
+		bp = dlist_container(Backend, elem, iter.cur);
 #else
 	for (i = MaxLivePostmasterChildren() - 1; i >= 0; i--)
 	{
@@ -2591,7 +2586,7 @@ static void
 CleanupBackend(int pid,
 			   int exitstatus)	/* child's exit status. */
 {
-	Dlelem	   *curr;
+	dlist_mutable_iter iter;
 
 	LogChildExit(DEBUG2, _("server process"), pid, exitstatus);
 
@@ -2623,9 +2618,9 @@ CleanupBackend(int pid,
 		return;
 	}
 
-	for (curr = DLGetHead(BackendList); curr; curr = DLGetSucc(curr))
+	dlist_foreach_modify(iter, &BackendList)
 	{
-		Backend    *bp = (Backend *) DLE_VAL(curr);
+		Backend    *bp = dlist_container(Backend, elem, iter.cur);
 
 		if (bp->pid == pid)
 		{
@@ -2644,7 +2639,7 @@ CleanupBackend(int pid,
 				ShmemBackendArrayRemove(bp);
 #endif
 			}
-			DLRemove(curr);
+			dlist_delete(&BackendList, iter.cur);
 			free(bp);
 			break;
 		}
@@ -2661,8 +2656,7 @@ CleanupBackend(int pid,
 static void
 HandleChildCrash(int pid, int exitstatus, const char *procname)
 {
-	Dlelem	   *curr,
-			   *next;
+	dlist_mutable_iter iter;
 	Backend    *bp;
 
 	/*
@@ -2677,10 +2671,10 @@ HandleChildCrash(int pid, int exitstatus, const char *procname)
 	}
 
 	/* Process regular backends */
-	for (curr = DLGetHead(BackendList); curr; curr = next)
+	dlist_foreach_modify(iter, &BackendList)
 	{
-		next = DLGetSucc(curr);
-		bp = (Backend *) DLE_VAL(curr);
+		bp = dlist_container(Backend, elem, iter.cur);
+
 		if (bp->pid == pid)
 		{
 			/*
@@ -2693,7 +2687,7 @@ HandleChildCrash(int pid, int exitstatus, const char *procname)
 				ShmemBackendArrayRemove(bp);
 #endif
 			}
-			DLRemove(curr);
+			dlist_delete(&BackendList, iter.cur);
 			free(bp);
 			/* Keep looping so we can signal remaining backends */
 		}
@@ -3056,7 +3050,7 @@ PostmasterStateMachine(void)
 		 * normal state transition leading up to PM_WAIT_DEAD_END, or during
 		 * FatalError processing.
 		 */
-		if (DLGetHead(BackendList) == NULL &&
+		if (dlist_is_empty(&BackendList) &&
 			PgArchPID == 0 && PgStatPID == 0)
 		{
 			/* These other guys should be dead already */
@@ -3182,12 +3176,12 @@ signal_child(pid_t pid, int signal)
 static bool
 SignalSomeChildren(int signal, int target)
 {
-	Dlelem	   *curr;
+	dlist_iter  iter;
 	bool		signaled = false;
 
-	for (curr = DLGetHead(BackendList); curr; curr = DLGetSucc(curr))
+	dlist_foreach(iter, &BackendList)
 	{
-		Backend    *bp = (Backend *) DLE_VAL(curr);
+		Backend    *bp = dlist_container(Backend, elem, iter.cur);
 
 		if (bp->dead_end)
 			continue;
@@ -3325,8 +3319,8 @@ BackendStartup(Port *port)
 	 */
 	bn->pid = pid;
 	bn->is_autovacuum = false;
-	DLInitElem(&bn->elem, bn);
-	DLAddHead(BackendList, &bn->elem);
+	dlist_push_head(&BackendList, &bn->elem);
+
 #ifdef EXEC_BACKEND
 	if (!bn->dead_end)
 		ShmemBackendArrayAdd(bn);
@@ -4428,12 +4422,12 @@ PostmasterRandom(void)
 static int
 CountChildren(int target)
 {
-	Dlelem	   *curr;
+	dlist_iter  iter;
 	int			cnt = 0;
 
-	for (curr = DLGetHead(BackendList); curr; curr = DLGetSucc(curr))
+	dlist_foreach(iter, &BackendList)
 	{
-		Backend    *bp = (Backend *) DLE_VAL(curr);
+		Backend    *bp = dlist_container(Backend, elem, iter.cur);
 
 		if (bp->dead_end)
 			continue;
@@ -4612,8 +4606,7 @@ StartAutovacuumWorker(void)
 			if (bn->pid > 0)
 			{
 				bn->is_autovacuum = true;
-				DLInitElem(&bn->elem, bn);
-				DLAddHead(BackendList, &bn->elem);
+				dlist_push_head(&BackendList, &bn->elem);
 #ifdef EXEC_BACKEND
 				ShmemBackendArrayAdd(bn);
 #endif
