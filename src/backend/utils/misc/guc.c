@@ -52,6 +52,7 @@
 #include "parser/scansup.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
+#include "postmaster/bgworker.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/syslogger.h"
@@ -107,7 +108,8 @@
  * removed, we still could not exceed INT_MAX/4 because some places compute
  * 4*MaxBackends without any overflow check.  This is rechecked in
  * check_maxconnections, since MaxBackends is computed as MaxConnections
- * plus autovacuum_max_workers plus one (for the autovacuum launcher).
+ * plus the number of bgworkers plus autovacuum_max_workers plus one (for the
+ * autovacuum launcher).
  */
 #define MAX_BACKENDS	0x7fffff
 
@@ -8605,7 +8607,8 @@ show_tcp_keepalives_count(void)
 static bool
 check_maxconnections(int *newval, void **extra, GucSource source)
 {
-	if (*newval + autovacuum_max_workers + 1 > MAX_BACKENDS)
+	if (*newval + GetNumShmemAttachedBgworkers() + autovacuum_max_workers + 1 >
+		MAX_BACKENDS)
 		return false;
 	return true;
 }
@@ -8613,13 +8616,15 @@ check_maxconnections(int *newval, void **extra, GucSource source)
 static void
 assign_maxconnections(int newval, void *extra)
 {
-	MaxBackends = newval + autovacuum_max_workers + 1;
+	MaxBackends = newval + autovacuum_max_workers + 1 +
+		GetNumShmemAttachedBgworkers();
 }
 
 static bool
 check_autovacuum_max_workers(int *newval, void **extra, GucSource source)
 {
-	if (MaxConnections + *newval + 1 > MAX_BACKENDS)
+	if (MaxConnections + *newval + 1 + GetNumShmemAttachedBgworkers() >
+		MAX_BACKENDS)
 		return false;
 	return true;
 }
@@ -8627,7 +8632,7 @@ check_autovacuum_max_workers(int *newval, void **extra, GucSource source)
 static void
 assign_autovacuum_max_workers(int newval, void *extra)
 {
-	MaxBackends = MaxConnections + newval + 1;
+	MaxBackends = MaxConnections + newval + 1 + GetNumShmemAttachedBgworkers();
 }
 
 static bool

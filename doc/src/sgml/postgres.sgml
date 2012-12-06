@@ -217,6 +217,7 @@
   &plpython;
 
   &spi;
+  &bgworker;
 
  </part>
 
