@@ -77,6 +77,12 @@ typedef struct SMgrRelationData
 
 typedef SMgrRelationData *SMgrRelation;
 
+/* Hook for plugins to get control in smgrextend() */
+typedef void (*SmgrExtend_hook_type) (SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
+					char *buffer, bool skipFsync);
+extern PGDLLIMPORT SmgrExtend_hook_type SmgrExtend_hook;
+
+
 #define SmgrIsTemp(smgr) \
 	RelFileNodeBackendIsTemp((smgr)->smgr_rnode)
 

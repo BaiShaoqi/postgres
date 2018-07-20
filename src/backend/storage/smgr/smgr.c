@@ -25,6 +25,9 @@
 #include "utils/inval.h"
 
 
+/* Hook for plugin to get control in smgrextend() */
+SmgrExtend_hook_type SmgrExtend_hook = NULL;
+
 /*
  * This struct of function pointers defines the API between smgr.c and
  * any individual storage manager module.  Note that smgr subfunctions are
@@ -600,6 +603,9 @@ void
 smgrextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		   char *buffer, bool skipFsync)
 {
+	if (SmgrExtend_hook)
+		(*SmgrExtend_hook)(reln, forknum, blocknum,
+										buffer, skipFsync);
 	smgrsw[reln->smgr_which].smgr_extend(reln, forknum, blocknum,
 										 buffer, skipFsync);
 }
