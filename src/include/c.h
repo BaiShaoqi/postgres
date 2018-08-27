@@ -690,6 +690,51 @@ typedef NameData *Name;
 			*_start++ = 0; \
 	} while (0)
 
+/*
+ * Compile-time checks that a variable (or expression) has the specified type.
+ *
+ * AssertVariableIsOfType() can be used as a statement.
+ * AssertVariableIsOfTypeMacro() is intended for use in macros, eg
+ *              #define foo(x) (AssertVariableIsOfTypeMacro(x, int), bar(x))
+ *
+ * If we don't have __builtin_types_compatible_p, we can still assert that
+ * the types have the same size.  This is far from ideal (especially on 32-bit
+ * platforms) but it provides at least some coverage.
+ */
+#ifdef HAVE__BUILTIN_TYPES_COMPATIBLE_P
+#define AssertVariableIsOfType(varname, typename) \
+        StaticAssertStmt(__builtin_types_compatible_p(__typeof__(varname), typename), \
+        CppAsString(varname) " does not have type " CppAsString(typename))
+#define AssertVariableIsOfTypeMacro(varname, typename) \
+        ((void) StaticAssertExpr(__builtin_types_compatible_p(__typeof__(varname), typename), \
+         CppAsString(varname) " does not have type " CppAsString(typename)))
+#else /* !HAVE__BUILTIN_TYPES_COMPATIBLE_P */
+#define AssertVariableIsOfType(varname, typename) \
+        StaticAssertStmt(sizeof(varname) == sizeof(typename), \
+        CppAsString(varname) " does not have type " CppAsString(typename))
+#define AssertVariableIsOfTypeMacro(varname, typename) \
+        ((void) StaticAssertExpr(sizeof(varname) == sizeof(typename),           \
+         CppAsString(varname) " does not have type " CppAsString(typename)))
+#endif /* HAVE__BUILTIN_TYPES_COMPATIBLE_P */
+
+
+/*
+ * Function inlining support -- Allow modules to define functions that may be
+ * inlined, if the compiler supports it.
+ *
+ * The function bodies must be defined in the module header prefixed by
+ * STATIC_IF_INLINE, protected by a cpp symbol that the module's .c file must
+ * define.  If the compiler doesn't support inline functions, the function
+ * definitions are pulled in by the .c file as regular (not inline) symbols.
+ *
+ * The header must also declare the functions' prototypes, protected by
+ * !PG_USE_INLINE.
+ */
+#ifdef PG_USE_INLINE
+#define STATIC_IF_INLINE static inline
+#else
+#define STATIC_IF_INLINE
+#endif  /* PG_USE_INLINE */
 
 /* ----------------------------------------------------------------
  *				Section 7:	random stuff
